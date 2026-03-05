@@ -1,0 +1,302 @@
+// ============================================================================
+// CONSERVATION SIMULATION MODEL (SLiM – nonWF)
+// ----------------------------------------------------------------------------
+// Strategy: Ongoing supplementation (insurance → wild)
+//
+// Populations:
+//   p0 = Wild population (disease present)
+//   p1 = Insurance population (disease-free)
+//
+// Scenario (Benefit 1):
+//   Beneficial mutation (m2) reduces infection risk.
+//   Implementation: infection probability for m2 carriers is scaled by ScaleRes.
+//
+// Supplementation:
+//   Repeated female supplementation from p1 → p0 during generations 25006–25050,
+//   applied every 2 cycles (even-numbered cycles).
+//
+// Key events:
+//   - Gen 25000: Import burn-in; create insurance population; seed infection in p0
+//   - Gen 25003: Introduce m2 into one random genome in p0
+//   - Gen 25006–25050: Ongoing supplementation (every second cycle)
+//
+// Termination:
+//   - Stop at wild extinction (p0 size = 0) or at generation 25700.
+// ============================================================================
+
+
+initialize()
+{
+	initializeSLiMModelType("nonWF");  // Non–Wright-Fisher model
+	initializeSex("A");                // Autosomal chromosome model
+
+	// -----------------------------
+	// Demography
+	// -----------------------------
+	defineConstant("FecuS", FecS);     // Fecundity: susceptible individuals
+	defineConstant("FecuI", FecI);     // Fecundity: infected individuals
+
+	defineConstant("WPSW", K2);        // Carrying capacity: wild population (p0)
+	defineConstant("IPSI", K1);        // Carrying capacity: insurance population (p1)
+
+	// -----------------------------
+	// Insurance establishment + supplementation
+	// -----------------------------
+	defineConstant("NMIP", MIP);       // Number of males moved p0 → p1 at establishment
+	defineConstant("NFIP", FIP);       // Number of females moved p0 → p1 at establishment
+	defineConstant("NFMI", NFM);       // Number of females supplemented p1 → p0 (per event)
+	// defineConstant("NMMI", NMM);    // (Optional) number of males supplemented p1 → p0
+
+	// -----------------------------
+	// Infection status tags (wild population)
+	// -----------------------------
+	defineConstant("DEVILS_S", 0);     // Susceptible
+	defineConstant("DEVILS_IY1", 1);   // Infected: year 1
+	defineConstant("DEVILS_IY2", 2);   // Infected: year 2
+	defineConstant("DEVILS_IY3", 3);   // Infected: year 3
+
+	// -----------------------------
+	// Disease parameters
+	// -----------------------------
+	defineConstant("InitInf", IniInf);       // Initial number of infected individuals
+	defineConstant("ProbiInf", ProbInf);     // Transmission scaling factor
+	defineConstant("ProbDeath", ProDeath);   // Mortality probability: infected year 1
+	defineConstant("ProbDeathy2", ProDeathy2); // Mortality probability: infected year 2
+	defineConstant("ProbaRePro", ProbRePro); // Probability infected individuals reproduce
+
+	defineConstant("ScaleRes", ScaRes);      // Infection-risk scaling for m2 carriers (resistance effect)
+
+	// -----------------------------
+	// Age structure
+	// -----------------------------
+	defineConstant("MAX_AGEWP", 7.0);  // Maximum age: wild population
+	defineConstant("MAX_AGEIP", 8.0);  // Maximum age: insurance population
+	defineConstant("AgeM", Age);       // Age of supplemented migrants
+	defineConstant("AgeNB", HMB);      // Minimum reproductive age
+	defineConstant("AgeI", AgeInf);    // Minimum age eligible for infection
+
+	// -----------------------------
+	// Genome and mutation parameters
+	// -----------------------------
+	defineConstant("LC", L);           // Chromosome length (e.g., 30 Mb)
+	defineConstant("MUR", MU);         // Mutation rate
+	defineConstant("RecR", RR);        // Recombination rate
+
+	initializeMutationType("m1", 0.5, "f", 0.0); // Neutral mutation type
+	initializeMutationType("m2", 0.5, "f", 0.0); // Beneficial mutation type (reduced infection risk)
+
+	initializeGenomicElementType("g1", m1, 1);   // Genomic element type (neutral background)
+	initializeMutationRate(MU);
+
+	m2.convertToSubstitution = F;
+	m1.convertToSubstitution = T;
+
+	initializeGenomicElement(g1, 0, L); // Uniform chromosome
+	initializeRecombinationRate(RR);
+}
+
+
+reproduction(p0, "F")
+{
+	// Wild reproduction: susceptible + year-1 infected adults contribute
+	malesS = p0.subsetIndividuals(sex="M", tag=DEVILS_S,  minAge=HMB, maxAge=6);  // Susceptible males
+	malesI = p0.subsetIndividuals(sex="M", tag=DEVILS_IY1, minAge=HMB, maxAge=6); // Infected (Y1) males
+	males  = c(malesS, malesI);                                                  // Male mating pool
+
+	femalesS = p0.subsetIndividuals(sex="F", tag=DEVILS_S,  minAge=HMB, maxAge=5);  // Susceptible females
+	femalesI = p0.subsetIndividuals(sex="F", tag=DEVILS_IY1, minAge=HMB, maxAge=5); // Infected (Y1) females
+	females  = c(femalesS, femalesI);                                               // Female breeding pool
+
+	females = sample(females, size(females), replace=F); // Randomize female order
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T); // Males may mate multiple times
+
+		// Litter size depends on parental infection status
+		if (female.tag == DEVILS_S & mate.tag == DEVILS_S)
+			litterSize = min(rpois(1, FecS), 4); // Healthy × healthy
+		else if (runif(1) < ProbRePro)
+			litterSize = min(rpois(1, FecI), 4); // At least one parent infected
+		else
+			litterSize = 0;
+
+		// Offspring start as susceptible
+		if (litterSize)
+		{
+			for (i in seqLen(litterSize))
+			{
+				offspring = p0.addCrossed(female, mate);
+				offspring.tag = DEVILS_S;
+			}
+		}
+	}
+	self.active = 0;
+}
+
+
+reproduction(p1, "F")
+{
+	// Insurance reproduction (disease-free)
+	males = p1.subsetIndividuals(sex="M", minAge=HMB, maxAge=6);
+	females = p1.subsetIndividuals(sex="F", minAge=HMB, maxAge=5);
+	females = sample(females, size(females), replace=F);
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T);
+		litterSize = min(rpois(1, FecS), 4);
+
+		for (i in seqLen(litterSize))
+			p1.addCrossed(female, mate);
+	}
+	self.active = 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25000: Import burn-in; establish insurance; seed infection in wild.
+// -----------------------------------------------------------------------------
+
+25000 early()
+{
+	// Import burn-in population
+	sim.readFromPopulationFile("/u/hknigus/scripts/Trial_sim.trees");
+	p0.individuals.tag = DEVILS_S;
+
+	// Establish insurance population (founders sampled from wild)
+	sim.addSubpop("p1", 0);
+
+	adult_females = p0.subsetIndividuals(sex="F", tag=DEVILS_S, minAge=1, maxAge=4);
+	migrants_f = sample(adult_females, FIP, replace=F);
+
+	adult_males = p0.subsetIndividuals(sex="M", tag=DEVILS_S, minAge=1, maxAge=4);
+	migrants_m = sample(adult_males, MIP, replace=F);
+
+	p1.takeMigrants(migrants_f);
+	p1.takeMigrants(migrants_m);
+
+	// Seed infection in wild population
+	infected_Year1 = p0.sampleIndividuals(IniInf, replace=F, tag=DEVILS_S, minAge=AgeInf);
+	infected_Year1.tag = DEVILS_IY1;
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25003: Introduce beneficial mutation m2 into one random genome in p0.
+// -----------------------------------------------------------------------------
+
+25003 early()
+{
+	target = sample(p0.individuals.genomes, 1);
+	target.addNewDrawnMutation(m2, 15000000);
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25006–25050: Ongoing supplementation (p1 → p0) every 2 cycles.
+// -----------------------------------------------------------------------------
+
+25006:25050 early()
+{
+	if (sim.cycle % 2 == 0)
+	{
+		migF = p1.sampleIndividuals(NFM, sex="F", minAge=Age, maxAge=Age);
+		migF.tag = DEVILS_S;
+		p0.takeMigrants(migF);
+	}
+}
+
+
+early()
+{
+	// -----------------------------
+	// Density regulation + age-based mortality (insurance)
+	// -----------------------------
+	indsIP = p1.individuals;
+	indsIP.fitnessScaling = K1 / p1.individualCount;
+
+	agesIP = indsIP.age;
+	indsIP[agesIP > 8].fitnessScaling = 0.0;
+	age_mortalityIP = sqrt((MAX_AGEIP - agesIP) / MAX_AGEIP);
+	indsIP.fitnessScaling=indsIP.fitnessScaling*age_mortalityIP;
+
+	// -----------------------------
+	// Density regulation + age-based mortality (wild)
+	// -----------------------------
+	indsWP = p0.individuals;
+	agesWP = indsWP.age;
+
+	indsWP.fitnessScaling = K2 / p0.individualCount;
+
+	age_mortalityWP = sqrt((MAX_AGEWP - agesWP) / MAX_AGEWP);
+	indsWP[agesWP >= 7].fitnessScaling = 0.0;
+	indsWP.fitnessScaling=age_mortalityWP*indsIP.fitnessScaling;
+
+	// -----------------------------
+	// Infection transmission + progression (wild)
+	// -----------------------------
+	uninfected  = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_S);
+	infected_Y1 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY1, minAge=AgeInf);
+	infected_Y2 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY2, minAge=AgeInf);
+	infected_Y3 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY3, minAge=AgeInf);
+
+	infected = c(infected_Y1, infected_Y2, infected_Y3);
+
+	// Baseline infection probability scales with number of infected individuals
+	PropI = min(1.0, ProbInf * infected.size());
+
+	// Split susceptibles by m2 carrier status
+	has_m2 = (uninfected.countOfMutationsOfType(m2) >= 1);
+	uninfected_RES    = uninfected[has_m2];   // Resistant (m2 carriers)
+	uninfected_NONRES = uninfected[!has_m2];  // Non-resistant
+
+	// Transmission to resistant individuals is reduced by ScaleRes
+	num_transmissions_RES = rbinom(1, uninfected_RES.size(), PropI * ScaRes);
+	targets_RES = sample(uninfected_RES, num_transmissions_RES, replace=F);
+	targets_RES.tag = DEVILS_IY1;
+
+	// Transmission to non-resistant individuals uses baseline PropI
+	num_transmissions_NONRES = rbinom(1, uninfected_NONRES.size(), PropI);
+	targets_NONRES = sample(uninfected_NONRES, num_transmissions_NONRES, replace=F);
+	targets_NONRES.tag = DEVILS_IY1;
+
+	// Infection progression and mortality
+	for (inf in infected)
+	{
+		if (inf.tag == DEVILS_IY1)
+		{
+			if (runif(1) < ProDeath) sim.killIndividuals(inf);
+			else inf.tag = DEVILS_IY2;
+		}
+		else if (inf.tag == DEVILS_IY2)
+		{
+			if (runif(1) < ProDeathy2) sim.killIndividuals(inf);
+			else inf.tag = DEVILS_IY3;
+		}
+		else
+		{
+			sim.killIndividuals(inf);
+		}
+	}
+}
+
+
+late()
+{
+	// stop at extinction
+	if (p0.individualCount == 0)
+	{
+		sim.simulationFinished();
+	}
+	else
+	{
+		// (Your existing summary + catn(...) output remains unchanged)
+	}
+}
+
+
+25700 late()
+{
+	sim.simulationFinished();
+}

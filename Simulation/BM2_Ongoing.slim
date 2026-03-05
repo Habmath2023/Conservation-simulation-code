@@ -1,0 +1,416 @@
+// ============================================================================
+// CONSERVATION SIMULATION MODEL (SLiM – nonWF)
+// ----------------------------------------------------------------------------
+// Strategy: Ongoing supplementation (insurance → wild)
+//
+// Populations:
+//   p0 = Wild population (disease present)
+//   p1 = Insurance population (disease-free)
+//
+// Scenario (Benefit 2):
+//   Beneficial mutation (m2) increases longevity under infection.
+//   Implementation: m2 carriers have lower infection-stage mortality probabilities
+//   (ProbDeath_M2, ProbDeathy2_M2, ProbDeathy3_M2) and can remain infected for an
+//   additional stage (DEVILS_IY4) compared to non-carriers (max DEVILS_IY3).
+//
+// Supplementation:
+//   Repeated female supplementation from p1 → p0 during generations 25006–25050,
+//   applied every 2 cycles (even-numbered cycles).
+//
+// Key events:
+//   - Gen 25000: Import burn-in; create insurance population; seed infection in p0
+//   - Gen 25003: Introduce m2 into one random genome in p0
+//   - Gen 25006–25050: Ongoing supplementation (every second cycle)
+//
+// Termination:
+//   - Stop at wild extinction (p0 size = 0) or at generation 25700.
+// ============================================================================
+
+
+// Strategy: One_off supplementation
+// p0 is the wild population
+// p1 is the insurance population
+// Benefit two: Beneficial mutation that made individuals live longer
+
+
+initialize()
+{
+	initializeSLiMModelType("nonWF");  // Non–Wright-Fisher model
+	initializeSex("A");                // Autosomal chromosome model
+
+	// -----------------------------
+	// Demography
+	// -----------------------------
+	defineConstant("FecuS", FecS);     // Fecundity: susceptible individuals
+	defineConstant("FecuI", FecI);     // Fecundity: infected individuals
+
+	defineConstant("WPSW", K2);        // Carrying capacity: wild population (p0)
+	defineConstant("IPSI", K1);        // Carrying capacity: insurance population (p1)
+
+	// -----------------------------
+	// Insurance establishment + supplementation
+	// -----------------------------
+	defineConstant("NMIP", MIP);       // Number of males moved p0 → p1 at establishment
+	defineConstant("NFIP", FIP);       // Number of females moved p0 → p1 at establishment
+	defineConstant("NFMI", NFM);       // Number of females supplemented p1 → p0 (per event)
+	// defineConstant("NMMI", NMM);    // (Optional) number of males supplemented p1 → p0
+
+	// -----------------------------
+	// Infection status tags (wild population)
+	// -----------------------------
+	defineConstant("DEVILS_S", 0);     // Susceptible
+	defineConstant("DEVILS_IY1", 1);   // Infected: year 1
+	defineConstant("DEVILS_IY2", 2);   // Infected: year 2
+	defineConstant("DEVILS_IY3", 3);   // Infected: year 3
+	defineConstant("DEVILS_IY4", 4);   // Infected: year 4 (m2 carriers only)
+
+	// -----------------------------
+	// Disease parameters
+	// -----------------------------
+	defineConstant("InitInf", IniInf);          // Initial number of infected individuals
+	defineConstant("ProbiInf", ProbInf);        // Transmission scaling factor
+
+	defineConstant("ProbDeath", ProDeath);      // Mortality probability: infected year 1 (non-m2)
+	defineConstant("ProbDeathy2", ProDeathy2);  // Mortality probability: infected year 2 (non-m2)
+
+	defineConstant("ProbDeath_M2", ProDeath_M2);       // Mortality probability: infected year 1 (m2)
+	defineConstant("ProbDeathy2_M2", ProDeathy2_M2);   // Mortality probability: infected year 2 (m2)
+	defineConstant("ProbDeathy3_M2", ProDeathy3_M2);   // Mortality probability: infected year 3 (m2)
+
+	defineConstant("ProbaRePro", ProbRePro);    // Probability infected individuals reproduce
+
+	// -----------------------------
+	// Age structure
+	// -----------------------------
+	defineConstant("MAX_AGEWP", 7.0);  // Maximum age: wild population
+	defineConstant("MAX_AGEIP", 8.0);  // Maximum age: insurance population
+	defineConstant("AgeM", Age);       // Minimum age of migrants (supplemented individuals)
+	defineConstant("AgeNB", HMB);      // Minimum reproductive age
+	defineConstant("AgeMin", AgeInf);  // Minimum age eligible for infection
+
+	// -----------------------------
+	// Genome and mutation parameters
+	// -----------------------------
+	defineConstant("LC", L);           // Chromosome length (e.g., 30 Mb)
+	defineConstant("MUR", MU);         // Mutation rate
+	defineConstant("RecR", RR);        // Recombination rate
+
+	initializeMutationType("m1", 0.5, "f", 0.0); // Neutral mutation type
+	initializeMutationType("m2", 0.5, "f", 0.0); // Beneficial mutation type (longevity under infection)
+
+	initializeGenomicElementType("g1", m1, 1);   // Genomic element type (neutral background)
+	initializeMutationRate(MU);
+
+	m2.convertToSubstitution = F;
+	m1.convertToSubstitution = T;
+
+	initializeGenomicElement(g1, 0, L); // Uniform chromosome
+	initializeRecombinationRate(RR);
+}
+
+
+reproduction(p0, "F")
+{
+	// Wild reproduction:
+	// - Males: susceptible + year-1 infected
+	// - Females: include susceptible + (some) infected; broaden female pool for m2 carriers (longevity)
+	malesS = p0.subsetIndividuals(sex="M", tag=DEVILS_S,  minAge=HMB, maxAge=6);   // Susceptible males
+	malesI = p0.subsetIndividuals(sex="M", tag=DEVILS_IY1, minAge=HMB, maxAge=6);  // Infected (Y1) males
+	males  = c(malesS, malesI);                                                   // Male mating pool
+
+	allFemales = p0.subsetIndividuals(sex="F", minAge=2, maxAge=5);                // Candidate females (age 2–5)
+	has_m2 = (allFemales.countOfMutationsOfType(m2) > 0);                          // m2 carrier indicator
+
+	FemalesWithBM    = allFemales[has_m2];   // m2 carriers
+	FemalesWithoutBM = allFemales[!has_m2];  // non-carriers
+
+	// Female eligibility by infection stage:
+	// - m2 carriers: allow S, IY1, IY2 (longer infected survival)
+	// - non-carriers: allow S, IY1
+	candidateFemalesWithBM     = FemalesWithBM[FemalesWithBM.tag == DEVILS_S | FemalesWithBM.tag == DEVILS_IY1 | FemalesWithBM.tag == DEVILS_IY2];
+	candiadteFemalesWithoutBM  = FemalesWithoutBM[FemalesWithoutBM.tag == DEVILS_S | FemalesWithoutBM.tag == DEVILS_IY1];
+
+	females = c(candidateFemalesWithBM, candiadteFemalesWithoutBM);
+	females = sample(females, size(females), replace=F); // Randomize female order
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T); // Males may mate multiple times
+
+		// Litter size depends on parental infection status
+		if (female.tag == DEVILS_S & mate.tag == DEVILS_S)
+			litterSize = min(rpois(1, FecS), 4);  // Healthy × healthy
+		else if (runif(1) < ProbRePro)
+			litterSize = min(rpois(1, FecuI), 4); // At least one parent infected
+		else
+			litterSize = 0;
+
+		// Offspring start as susceptible
+		if (litterSize > 0)
+		{
+			for (i in seqLen(litterSize))
+			{
+				offspring = p0.addCrossed(female, mate);
+				offspring.tag = DEVILS_S;
+			}
+		}
+	}
+	self.active = 0;
+}
+
+
+reproduction(p1, "F")
+{
+	// Insurance reproduction (disease-free)
+	males = p1.subsetIndividuals(sex="M", minAge=Age, maxAge=6);   // Adult males
+	females = p1.subsetIndividuals(sex="F", minAge=Age, maxAge=5); // Adult females
+	females = sample(females, size(females), replace=F);
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T);
+		litterSize = min(rpois(1, FecS), 4);
+
+		for (i in seqLen(litterSize))
+			p1.addCrossed(female, mate);
+	}
+	self.active = 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25000: Import burn-in; establish insurance; seed infection in wild.
+// -----------------------------------------------------------------------------
+
+25000 early()
+{
+	// Import burn-in population
+	sim.readFromPopulationFile("/u/hknigus/scripts/Trial_sim.trees");
+	p0.individuals.tag = DEVILS_S;
+
+	// Establish insurance population (founders sampled from wild)
+	sim.addSubpop("p1", 0);
+
+	adult_females = p0.subsetIndividuals(sex="F", tag=DEVILS_S, minAge=1, maxAge=4); // Founder females
+	migrants_f = sample(adult_females, FIP, replace=F);
+
+	adult_males = p0.subsetIndividuals(sex="M", tag=DEVILS_S, minAge=1, maxAge=4);   // Founder males
+	migrants_m = sample(adult_males, MIP, replace=F);
+
+	p1.takeMigrants(migrants_f);
+	p1.takeMigrants(migrants_m);
+
+	// Seed infection in wild population
+	infected_Year1 = p0.sampleIndividuals(IniInf, replace=F, tag=DEVILS_S, minAge=2);
+	infected_Year1.tag = DEVILS_IY1;
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25003: Introduce beneficial mutation m2 into one random genome in p0.
+// -----------------------------------------------------------------------------
+
+25003 early()
+{
+	target = sample(p0.individuals.genomes, 1);
+	target.addNewDrawnMutation(m2, rdunif(1, 0, 30000000));
+}
+
+
+// -----------------------------------------------------------------------------
+// GEN 25006–25050: Ongoing supplementation (p1 → p0) every 2 cycles.
+// -----------------------------------------------------------------------------
+
+25006:25050 early()
+{
+	if (sim.cycle % 2 == 0)
+	{
+		migF = p1.sampleIndividuals(NFM, sex="F", minAge=Age, maxAge=Age); // Supplemented females
+		migF.tag = DEVILS_S;
+		p0.takeMigrants(migF);
+	}
+}
+early()
+{
+	// -----------------------------
+	// Density regulation + age-based mortality (insurance)
+	// -----------------------------
+	indsIP = p1.individuals;
+	indsIP.fitnessScaling = K1 / p1.individualCount;
+
+	agesIP = indsIP.age;
+	indsIP[agesIP > 8].fitnessScaling = 0.0;
+	age_mortalityIP = sqrt((MAX_AGEIP - agesIP) / MAX_AGEIP);
+	indsIP.fitnessScaling = indsIP.fitnessScaling*age_mortalityIP;
+
+	// -----------------------------
+	// Density regulation + age-based mortality (wild)
+	// -----------------------------
+	indsWP = p0.individuals;
+	agesWP = indsWP.age;
+
+	indsWP.fitnessScaling = K2 / p0.individualCount;
+
+	age_mortalityWP = sqrt((MAX_AGEWP - agesWP) / MAX_AGEWP);
+	indsWP[agesWP >= 7].fitnessScaling = 0.0;
+	indsWP.fitnessScaling = indsWP.fitnessScaling*age_mortalityWP;
+
+	// -----------------------------
+	// Infection transmission + progression (wild)
+	// -----------------------------
+	uninfected  = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_S);
+	infected_Y1 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY1, minAge=AgeInf);
+	infected_Y2 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY2, minAge=AgeInf);
+	infected_Y3 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY3, minAge=AgeInf);
+	infected_Y4 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY4, minAge=AgeInf);
+
+	infected = c(infected_Y1, infected_Y2, infected_Y3, infected_Y4);
+
+	// Transmission probability scales with number of infected individuals
+	PropI = min(1.0, ProbInf * infected.size());
+
+	// New infections
+	num_transmissions = rbinom(1, uninfected.size(), PropI);
+	targets = sample(uninfected, num_transmissions, replace=F);
+	targets.tag = DEVILS_IY1;
+
+	// Infection progression and mortality:
+	// - m2 carriers: reduced mortality and extra infected stage (IY4)
+	// - non-carriers: standard progression ending at IY3
+	for (inf in infected)
+	{
+		has_m2 = (inf.countOfMutationsOfType(m2) > 0);
+
+		if (has_m2)
+		{
+			if (inf.tag == DEVILS_IY1)
+			{
+				if (runif(1) < ProDeath_M2) sim.killIndividuals(inf);
+				else inf.tag = DEVILS_IY2;
+			}
+			else if (inf.tag == DEVILS_IY2)
+			{
+				if (runif(1) < ProDeathy2_M2) sim.killIndividuals(inf);
+				else inf.tag = DEVILS_IY3;
+			}
+			else if (inf.tag == DEVILS_IY3)
+			{
+				if (runif(1) < ProDeathy3_M2) sim.killIndividuals(inf);
+				else inf.tag = DEVILS_IY4;
+			}
+			else
+			{
+				sim.killIndividuals(inf); // All IY4 die
+			}
+		}
+		else
+		{
+			if (inf.tag == DEVILS_IY1)
+			{
+				if (runif(1) < ProDeath) sim.killIndividuals(inf);
+				else inf.tag = DEVILS_IY2;
+			}
+			else if (inf.tag == DEVILS_IY2)
+			{
+				if (runif(1) < ProDeathy2) sim.killIndividuals(inf);
+				else inf.tag = DEVILS_IY3;
+			}
+			else
+			{
+				sim.killIndividuals(inf); // All IY3 die
+			}
+		}
+	}
+}
+
+
+late() {
+	// stop at extinction
+	if (p0.individualCount == 0)
+	{
+		
+		sim.simulationFinished();
+	}
+	else
+	{
+		
+		males= sum(p0.individuals.sex == "M" & p0.individuals.age >= 2 & p0.individuals.age <= 6);
+		females=sum(p0.individuals.sex == "F" & p0.individuals.age >= 2 & p0.individuals.age <= 5);;
+		
+		// Demography summary
+		WPS=p0.individualCount;//Population size for wild population
+		IPS=p1.individualCount;//Population size for insurance population
+		WPMaxAge=max(p0.individuals.age);//Maximum age of individuals in wild population
+		IPMaxAge=max(p1.individuals.age);//Maximum age of individuals in insurance population
+		AveageWP=mean(p0.individuals.age);//Average age of wild population
+		AveageIP=mean(p1.individuals.age);//Average age of insurance population
+		
+		// Fitness calculation for individuals based on infection status and the presence of beneficial mutations:
+		uninfected = p0.sampleIndividuals( p0.individualCount, tag=DEVILS_S);
+		infected_Y1 = p0.sampleIndividuals( p0.individualCount, tag=DEVILS_IY1);
+		infected_Y2 = p0.sampleIndividuals( p0.individualCount, tag=DEVILS_IY2);
+		infected_Y3 = p0.sampleIndividuals( p0.individualCount, tag=DEVILS_IY3);
+		infected_Y4 = p0.sampleIndividuals( p0.individualCount, tag=DEVILS_IY4);
+		infected=c(infected_Y1,infected_Y2,infected_Y3,infected_Y4);
+		
+		all_uninfected_hasm2 = (uninfected.countOfMutationsOfType(m2) >= 1);
+		all_infected_hasm2 = (infected.countOfMutationsOfType(m2) >= 1);
+		uninfected_hasm2 =uninfected[all_uninfected_hasm2];// Non-infected individuals with beneficial mutations
+		infected_hasm2= infected[all_infected_hasm2];// Infected individuals with beneficial mutations
+		infected_nothasM2=infected[!all_infected_hasm2];// Infected individuals without beneficial mutations
+		uninfected_nothasM2 = uninfected[!all_uninfected_hasm2];// Non-infected individuals without beneficial mutations
+		mean_fitness = mean(p0.cachedFitness(NULL));// Meanfitness of the wild population
+		D_fitness=mean(p0.cachedFitness(infected.index));
+		ND_fitness=mean(p0.cachedFitness(uninfected.index));
+		infected_Ben_fitness=mean(p0.cachedFitness(infected_hasm2.index));//Fitness for those infected with beneficial
+		uinfected_Ben_fitness=mean(p0.cachedFitness(uninfected_hasm2.index));//Fitness for those uninfected with beneficial
+		infected_noBen_fitness=mean(p0.cachedFitness(infected_nothasM2.index));
+		uninfected_noBen_fitness=mean(p0.cachedFitness(uninfected_nothasM2.index));
+		
+		tags = p0.individuals.tag;
+		Suscepl=uninfected.size();
+		infected_Y1Tot=infected_Y1.size();
+		infected_Y2Tot=infected_Y2.size();
+		infected_Y3Tot=infected_Y3.size();
+		infected_Y4Tot=infected_Y4.size();
+		
+		Infectedl=infected_Y1.size()+infected_Y2.size()+infected_Y3.size()+infected_Y4.size();
+		
+		all = p0.individuals;
+		mut2 = sum(all.genomes.countOfMutationsOfType(m2)>0);
+		Prop_Ben = mut2 / (2 * size(all));
+
+Num_Ben =mut2/2;
+            Num_Ben_Individuals = sum(all.countOfMutationsOfType(m2) > 0); // Count individuals with at least one m2 mutation
+            Prop_Bencheck = Num_Ben_Individuals / size(all); // Proportion of individuals with beneficial mutations
+
+
+		
+		Prop_Inf=Infectedl/WPS;
+		
+		// Calculation of heterozygosity 
+		Heterozygosity=calcHeterozygosity(p1.genomes); //Heterozygosity for insurance population
+		Heterozygosity2=calcHeterozygosity(p0.genomes);//Heterozygosity for wild population
+		
+		mutw1 = sim.mutationsOfType(m1);
+		mutw2 = sim.mutationsOfType(m2);
+		Funhet2=calcHeterozygosity(p0.genomes,mutw2);//Functional heterozygosity
+		Neuhet2=calcHeterozygosity(p0.genomes,mutw1);//Neutral heterozygosity
+		
+		Inbreeding2=calcInbreedingLoad(p0.genomes);//Whole genome based inbreeding for the wild population
+		Inbreeding2fun=calcInbreedingLoad(p0.genomes,m2);//Functional genome based inbreeding for the wild population
+		Inbreeding2neut=calcInbreedingLoad(p0.genomes,m1);//Neutral genome based inbreeding for the wild population
+		Inbreeding=calcInbreedingLoad(p1.genomes);//Whole genome based inbreeding for the insurance population
+		
+		Inbreedingneut=calcInbreedingLoad(p1.genomes, m1);
+		
+		catn(sim.cycle + "," + WPS+ "," +mean_fitness+ "," +Funhet2 + ","  + Heterozygosity2 +","+ WPMaxAge+","+ IPMaxAge+","+IPS + ","  + Heterozygosity+","+AveageIP+","+Suscepl+","+Infectedl+","+infected_Y1Tot+","+ infected_Y2Tot+","+ infected_Y3Tot+","+Prop_Inf+","+Prop_Ben+","+D_fitness+"," +ND_fitness+"," + infected_Ben_fitness  +"," + uinfected_Ben_fitness  +"," + infected_noBen_fitness +"," + uninfected_noBen_fitness+"," + Inbreeding+"," +Inbreedingneut+"," +Inbreeding2+","+Inbreeding2fun +"," +Inbreeding2neut +"," +males+"," +females +"," +Num_Ben +"," +Num_Ben_Individuals+"," +Prop_Bencheck) ;
+	}
+}
+
+
+
+25700 late()
+{
+	sim.simulationFinished();
+}

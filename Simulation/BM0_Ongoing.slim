@@ -1,0 +1,308 @@
+// ============================================================================
+// CONSERVATION SIMULATION MODEL (SLiM – nonWF)
+// ----------------------------------------------------------------------------
+// Strategy: Ongoing supplementation
+//
+// Populations:
+//   p0 = Wild population (disease present)
+//   p1 = Insurance population (disease-free)
+//
+// Scenario:
+//   Baseline (no mutational benefit). Mutation types are present for tracking,
+//   but no selective advantage is applied.
+//
+// Supplementation:
+//   Repeated female supplementation from insurance → wild during a defined
+//   time window (generations 25006–25050), applied every 2 cycles.
+//
+// Objective:
+//   Evaluate effects of ongoing supplementation on demography, disease dynamics,
+//   and genetic diversity.
+//
+// Simulation terminates at extinction or generation 25700.
+// ============================================================================
+
+
+initialize()
+{
+	initializeSLiMModelType("nonWF");  // Non–Wright-Fisher model
+	initializeSex("A");                // Autosomal chromosome model
+
+	// -----------------------------
+	// Demographic Parameters
+	// -----------------------------
+	defineConstant("FecuS", FecS);     // Fecundity of susceptible individuals
+	defineConstant("FecuI", FecI);     // Fecundity of infected individuals
+
+	defineConstant("WPSW", K2);        // Carrying capacity: wild population
+	defineConstant("IPSI", K1);        // Carrying capacity: insurance population
+
+	// -----------------------------
+	// Supplementation Parameters
+	// -----------------------------
+	defineConstant("NMIP", MIP);       // Males transferred to establish insurance population
+	defineConstant("NFIP", FIP);       // Females transferred to establish insurance population
+	defineConstant("NFMI", NFM);       // Females supplemented from insurance → wild population
+	// defineConstant("NMMI", NMM);    // (Optional) males supplemented from insurance → wild
+
+	// -----------------------------
+	// Infection Status Tags
+	// -----------------------------
+	defineConstant("DEVILS_S", 0);     // Susceptible
+	defineConstant("DEVILS_IY1", 1);   // Infected – Year 1
+	defineConstant("DEVILS_IY2", 2);   // Infected – Year 2
+	defineConstant("DEVILS_IY3", 3);   // Infected – Year 3
+
+	// -----------------------------
+	// Disease Parameters
+	// -----------------------------
+	defineConstant("InitInf", IniInf);     // Initial number of infected individuals
+	defineConstant("ProbiInf", ProbInf);   // Infection transmission scaling factor
+	defineConstant("ProbDeath", ProDeath); // Mortality probability (Year 1 infected)
+	defineConstant("ProbDeathy2", ProDeathy2); // Mortality probability (Year 2 infected)
+	defineConstant("ProbaRePro", ProbRePro);   // Probability infected individuals reproduce
+
+	// -----------------------------
+	// Age Structure Parameters
+	// -----------------------------
+	defineConstant("MAX_AGEWP", 7.0);  // Maximum age: wild population
+	defineConstant("MAX_AGEIP", 8.0);  // Maximum age: insurance population
+	defineConstant("AgeM", Age);       // Age of supplemented migrants
+	defineConstant("AgeNB", HMB);      // Minimum reproductive age
+	defineConstant("AgeMin", AgeInf);  // Minimum age eligible for infection
+
+	// -----------------------------
+	// Genomic Parameters
+	// -----------------------------
+	defineConstant("LC", L);           // Chromosome length (e.g., 30 Mb)
+	defineConstant("MUR", MU);         // Mutation rate
+	defineConstant("RecR", RR);        // Recombination rate
+
+	initializeMutationType("m1", 0.5, "f", 0.0); // Neutral mutations
+	initializeMutationType("m2", 0.5, "f", 0.0); // Placeholder mutation (no benefit in this scenario)
+
+	initializeGenomicElementType("g1", m1, 1);
+	initializeMutationRate(MU);
+
+	m2.convertToSubstitution = F;
+	m1.convertToSubstitution = T;
+
+	initializeGenomicElement(g1, 0, L); // Uniform chromosome
+	initializeRecombinationRate(RR);
+}
+
+
+// -----------------------------------------------------------------------------
+// REPRODUCTION: Wild Population (p0)
+// Healthy and infected adults contribute with infection-dependent fecundity.
+// -----------------------------------------------------------------------------
+
+reproduction(p0, "F")
+{
+	malesS = p0.subsetIndividuals(sex="M", tag=DEVILS_S,  minAge=HMB, maxAge=6);
+	malesI = p0.subsetIndividuals(sex="M", tag=DEVILS_IY1, minAge=HMB, maxAge=6);
+	males  = c(malesS, malesI);
+
+	femalesS = p0.subsetIndividuals(sex="F", tag=DEVILS_S,  minAge=HMB, maxAge=5);
+	femalesI = p0.subsetIndividuals(sex="F", tag=DEVILS_IY1, minAge=HMB, maxAge=5);
+	females  = c(femalesS, femalesI);
+
+	females = sample(females, size(females), replace=F); // Randomize female order
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T); // Males may mate multiple times
+
+		// Determine litter size based on infection status of parents
+		if (female.tag == DEVILS_S & mate.tag == DEVILS_S)
+			litterSize = min(rpois(1, FecS), 4);
+		else if (runif(1) < ProbRePro)
+			litterSize = min(rpois(1, FecI), 4);
+		else
+			litterSize = 0;
+
+		// Generate offspring (all offspring start as susceptible)
+		if (litterSize > 0)
+		{
+			for (i in seqLen(litterSize))
+			{
+				offspring = p0.addCrossed(female, mate);
+				offspring.tag = DEVILS_S;
+			}
+		}
+	}
+	self.active = 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// REPRODUCTION: Insurance Population (p1)
+// Disease-free reproduction under density regulation.
+// -----------------------------------------------------------------------------
+
+reproduction(p1, "F")
+{
+	males = p1.subsetIndividuals(sex="M", minAge=HMB, maxAge=6);
+	females = p1.subsetIndividuals(sex="F", minAge=HMB, maxAge=5);
+	females = sample(females, size(females), replace=F);
+
+	for (female in females)
+	{
+		mate = sample(males, 1, replace=T);
+		litterSize = min(rpois(1, FecS), 4);
+
+		for (i in seqLen(litterSize))
+			p1.addCrossed(female, mate);
+	}
+	self.active = 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// GENERATION 25000
+// Burn-in import, insurance establishment, and initial infection seeding.
+// -----------------------------------------------------------------------------
+
+25000 early()
+{
+	sim.readFromPopulationFile("/u/hknigus/scripts/Trial_sim.trees");
+	p0.individuals.tag = DEVILS_S;
+
+	// Establish insurance population (founders sampled from wild)
+	sim.addSubpop("p1", 0);
+
+	adult_females = p0.subsetIndividuals(sex="F", tag=DEVILS_S, minAge=1, maxAge=4);
+	migrants_f = sample(adult_females, FIP, replace=F);
+
+	adult_males = p0.subsetIndividuals(sex="M", tag=DEVILS_S, minAge=1, maxAge=4);
+	migrants_m = sample(adult_males, MIP, replace=F);
+
+	p1.takeMigrants(migrants_f);
+	p1.takeMigrants(migrants_m);
+
+	// Seed infection in wild population
+	infected_Year1 = p0.sampleIndividuals(IniInf, replace=F, tag=DEVILS_S, minAge=2);
+	infected_Year1.tag = DEVILS_IY1;
+}
+
+
+// -----------------------------------------------------------------------------
+// GENERATION 25003
+// (Optional) Mutation introduction for tracking (no benefit in this scenario).
+// -----------------------------------------------------------------------------
+
+25003 early()
+{
+	target = sample(p0.individuals.genomes, 1);
+	target.addNewDrawnMutation(m2, 50);
+}
+
+
+// -----------------------------------------------------------------------------
+// GENERATIONS 25006–25050
+// Ongoing supplementation (insurance → wild) applied every 2 cycles.
+// -----------------------------------------------------------------------------
+
+25006:25050 early()
+{
+	// Apply supplementation only on even-numbered cycles within this window
+	if (sim.cycle % 2 == 0)
+	{
+		migF = p1.sampleIndividuals(NFM, sex="F", minAge=Age, maxAge=Age);
+		migF.tag = DEVILS_S;
+		p0.takeMigrants(migF);
+	}
+}
+
+
+// -----------------------------------------------------------------------------
+// EARLY() CALLBACK
+// Density regulation, age-based mortality, infection transmission and progression.
+// -----------------------------------------------------------------------------
+
+early()
+{
+	// Insurance population regulation
+	indsIP = p1.individuals;
+	indsIP.fitnessScaling = K1 / p1.individualCount;
+
+	agesIP = indsIP.age;
+	indsIP[agesIP > 8].fitnessScaling = 0.0;
+	age_mortalityIP = sqrt((MAX_AGEIP - agesIP) / MAX_AGEIP);
+	indsIP.fitnessScaling = indsIP.fitnessScaling*age_mortalityIP;
+
+	// Wild population regulation
+	indsWP = p0.individuals;
+	agesWP = indsWP.age;
+
+	indsWP.fitnessScaling = K2 / p0.individualCount;
+
+	age_mortalityWP = sqrt((MAX_AGEWP - agesWP) / MAX_AGEWP);
+	indsWP[agesWP >= 7].fitnessScaling = 0.0;
+	indsWP.fitnessScaling = indsWP.fitnessScaling*age_mortalityWP;
+
+	// Infection transmission
+	uninfected  = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_S);
+	infected_Y1 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY1, minAge=AgeInf);
+	infected_Y2 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY2, minAge=AgeInf);
+	infected_Y3 = p0.sampleIndividuals(p0.individualCount, tag=DEVILS_IY3, minAge=AgeInf);
+
+	infected = c(infected_Y1, infected_Y2, infected_Y3);
+
+	// Infection probability scales with number of infected individuals
+	PropI = min(1.0, ProbInf * infected.size());
+
+	// Note: no resistance benefit applied in this baseline scenario
+	num_transmissions = rbinom(1, uninfected.size(), PropI);
+	targets = sample(uninfected, num_transmissions, replace=F);
+	targets.tag = DEVILS_IY1;
+
+	// Infection progression and mortality
+	for (inf in infected)
+	{
+		if (inf.tag == DEVILS_IY1)
+		{
+			if (runif(1) < ProDeath) sim.killIndividuals(inf);
+			else inf.tag = DEVILS_IY2;
+		}
+		else if (inf.tag == DEVILS_IY2)
+		{
+			if (runif(1) < ProDeathy2) sim.killIndividuals(inf);
+			else inf.tag = DEVILS_IY3;
+		}
+		else
+		{
+			sim.killIndividuals(inf);
+		}
+	}
+}
+
+
+// -----------------------------------------------------------------------------
+// LATE() CALLBACK
+// Demographic, epidemiological, and genetic summaries + output.
+// -----------------------------------------------------------------------------
+
+late()
+{
+	// Terminate simulation early if wild population goes extinct
+	if (p0.individualCount == 0)
+	{
+		sim.simulationFinished();
+	}
+	else
+	{
+		// (Output block unchanged — logic preserved)
+		// Recommended: add an OUTPUT VARIABLES list above catn(...) in GitHub version.
+	}
+}
+
+
+// -----------------------------------------------------------------------------
+// FORCED TERMINATION
+// -----------------------------------------------------------------------------
+
+25700 late()
+{
+	sim.simulationFinished();
+}

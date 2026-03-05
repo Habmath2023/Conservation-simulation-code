@@ -1,0 +1,396 @@
+---
+title: "Summary statistics"
+author: "Habtu et al."
+date: "2026-02-25"
+output: html_document
+---
+
+#One-off
+setwd("~/slimwork/New/Latest/One_off_V1/Null/Female/NB2/low_chancest3")**Trial20NBRevised**
+setwd("~/slimwork/New/Latest/One_off_V1/Null/Female/NB2/low_chancest2")**Trial20NBRevised_** #Do_nothing
+setwd("~/slimwork/New/Latest/One_off_V2/Ten/Female/benefit_two/low_chancest2")**MAM_Fem_B2y1Revised_**
+setwd("~/slimwork/New/Latest/One_off_V3edited/Null/Female/benefit_three/low_chancest2")**Trial5_BarbaraallB3nRevised_**
+#Ongoing
+setwd("~/slimwork/New/Latest/new2Ongoing/Two/Female/benefit_one/low_chancest2")
+setwd("~/slimwork/New/Latest/Ongoing_V3L1/Fourteen/Female/benefit_three/high_chancestext")**Trial_B3_Neutral_Females_**
+setwd("~/slimwork/New/Latest/newOngoing/Two/Female/benefit_two/low_chancest2")**Trial_Revised_new**
+setwd("~/slimwork/New/Latest/newOngoing/Two/Female/NB/low_chancest2") **Trial_allOn0NBRevised_**
+
+```{r}
+ # setwd("~/slimwork/New/Latest/newOngoing/Twelve/Female/NB/low_chancest3") 
+#setwd("~/slimwork/New/Latest/One_off_V1/Null/Female/NB2/low_chancest2")
+setwd("~/slimwork/New/Latest/One_off_V3edited/Ten/Female/benefit_three/low_chancest2")
+reps = 1000
+popSizeWP <- vector(mode='list', length=reps)
+PropDisWP<- vector(mode='list', length=reps)
+NeutHetWP<- vector(mode='list', length=reps)
+PropBenWP<- vector(mode='list', length=reps)
+NumBenWP<- vector(mode='list', length=reps)
+
+for (i in 1:reps) {
+  outfileName <- paste("Trial5_BarbaraallB3nRevised_", i, ".csv", sep="")
+  dataf <- read.csv (outfileName, skip=17, header=F)
+  colnames(dataf) <- c("sim.cycle" ," WPS","mean_fitness","Funhet2" , "Heterozygosity2", "WPMaxAge", "IPMaxAge","IPS", "Heterozygosity","AveageIP","Suscepl","Infectedl","infected_Y1Tot","infected_Y2Tot","infected_Y3Tot","Prop_Inf","Prop_Ben","D_fitness","ND_fitness","infected_Ben_fitness"," uninfected_Ben_fitness","infected_noBen_fitness","uninfected_noBen_fitness","Inbreeding","Inbreedingneut","Inbreeding2","Inbreeding2fun","Inbreeding2neut","males","females","Num_Ben","Num_Ben_Individuals","Prop_Bencheck")
+
+  
+  popSizeWP[[i]] <- dataf[,2]
+  PropDisWP[[i]] <- dataf[,16]
+  NeutHetWP[[i]] <- dataf[,5]
+  PropBenWP[[i]] <- dataf[,33]
+  NumBenWP[[i]] <- dataf[,32]
+}
+maxGen <- max(sapply(popSizeWP, length))
+popMat <- matrix(0, maxGen, reps)
+popMat2 <- matrix(0, maxGen, reps)
+popMat3 <- matrix(0, maxGen, reps)
+popMat4 <- matrix(0, maxGen, reps)
+popMat5 <- matrix(0, maxGen, reps)
+for (i in 1:reps){
+  thisLen <- length(popSizeWP[[i]])
+  thisLen2 <- length(PropDisWP[[i]])
+  thisLen3 <- length(PropBenWP[[i]])
+  thisLen4 <- length(NeutHetWP[[i]])
+  thisLen5 <- length(NumBenWP[[i]])
+  popMat[1:thisLen, i] <- popSizeWP[[i]]
+  popMat2[1:thisLen2, i] <- PropDisWP[[i]]
+  popMat3[1:thisLen3, i] <- PropBenWP[[i]]
+  popMat4[1:thisLen4, i] <- NeutHetWP[[i]]
+  popMat5[1:thisLen4, i] <- NumBenWP[[i]]
+}
+
+B1_Low1= as.data.frame(popMat)
+B1_Low3= as.data.frame(popMat2)
+B1_Low5= as.data.frame(popMat3)
+B1_Low7= as.data.frame(popMat4)
+B1_Low9= as.data.frame(popMat5)
+
+ncols=10
+
+satisfying_columns <- which(B1_Low5[100, ] > 0.5)
+size <- min(3, length(satisfying_columns))  # At least 3 columns, but not more than available
+sampled_satisfying_columns <- sample(satisfying_columns, size)
+remaining_columns <- setdiff(seq_len(ncol(B1_Low1)), sampled_satisfying_columns)
+sampled_remaining_columns <- sample(remaining_columns, ncols - length(sampled_satisfying_columns))
+sampled_columns <- c(sampled_satisfying_columns, sampled_remaining_columns)
+
+
+#sampled_columns <- sample(ncol(B1_Low1), ncols, replace = FALSE)
+
+
+Years<-1:1000
+#sampled_columns<-1:701
+B1_Low2= B1_Low1[Years,sampled_columns]
+B1_Low4= B1_Low3[Years,sampled_columns]
+B1_Low6= B1_Low5[Years,sampled_columns]
+B1_Low8= B1_Low7[Years,sampled_columns]
+B1_Low10= B1_Low9[Years,sampled_columns]
+# Transform to long format
+long_data <- B1_Low2%>%
+  mutate(Year = row_number()) %>%
+  pivot_longer(cols = starts_with("V"), names_to = "Rep", values_to = "PopSize") %>%
+  mutate(
+    Year = as.factor(Year),
+    Rep = as.integer(str_replace(Rep, "V", ""))
+  ) %>%
+  arrange(Rep, as.integer(Year)) %>%
+  dplyr:: mutate(Rep = as.factor(Rep))
+
+long_data2 <- B1_Low4%>%
+  mutate(Year = row_number()) %>%
+  pivot_longer(cols = starts_with("V"), names_to = "Rep", values_to = "PropInf") %>%
+  mutate(
+    Year = as.factor(Year),
+    Rep = as.integer(str_replace(Rep, "V", ""))
+  ) %>%
+  arrange(Rep, as.integer(Year)) %>%
+  mutate(Rep = as.factor(Rep))%>%
+  dplyr:: select(PropInf)
+
+# Transform to long format
+long_data3 <- B1_Low6%>%
+  mutate(Year = row_number()) %>%
+  pivot_longer(cols = starts_with("V"), names_to = "Rep", values_to = "Prop_Bencheck") %>%
+  mutate(
+    Year = as.factor(Year),
+    Rep = as.integer(str_replace(Rep, "V", ""))
+  ) %>%
+  arrange(Rep, as.integer(Year)) %>%
+  mutate(Rep = as.factor(Rep))%>%
+  dplyr:: select(Prop_Bencheck)
+
+long_data4 <- B1_Low8%>%
+  mutate(Year = row_number()) %>%
+  pivot_longer(cols = starts_with("V"), names_to = "Rep", values_to = "NeutHet") %>%
+  mutate(
+    Year = as.factor(Year),
+    Rep = as.integer(str_replace(Rep, "V", ""))
+  ) %>%
+  arrange(Rep, as.integer(Year)) %>%
+  mutate(Rep = as.factor(Rep))%>%
+  dplyr:: select(NeutHet)
+
+long_data5 <- B1_Low10%>%
+  mutate(Year = row_number()) %>%
+  pivot_longer(cols = starts_with("V"), names_to = "Rep", values_to = "NumBenWP") %>%
+  mutate(
+    Year = as.factor(Year),
+    Rep = as.integer(str_replace(Rep, "V", ""))
+  ) %>%
+  arrange(Rep, as.integer(Year)) %>%
+  mutate(Rep = as.factor(Rep))%>%
+  dplyr:: select(NumBenWP)
+
+```
+
+
+```{r}
+setwd("~/slimwork/Plots")
+d <- data.frame(long_data, long_data2, long_data3, long_data4, long_data5)
+nreps <- 1000
+
+# Determine the maximum available year in popMat
+max_available_row <- nrow(popMat)
+max_year <- max_available_row  # Assuming row number corresponds to year
+
+# If year 700 is requested but not available, use the maximum available instead
+target_year <- 700
+analysis_row <- min(target_year, max_available_row)
+
+# Calculate extinction proportion based on available data
+extinct_Reps <- sum(popMat[analysis_row, ] == 0, na.rm = TRUE)
+Prop.extinction <- round((extinct_Reps) / nreps, 2)
+cat(paste("Proportion of simulations went extinct at year", analysis_row, ":", Prop.extinction, "\n"))
+
+# Function to create consistent plot with different color schemes
+create_plot <- function(data, color_var, color_title, color_option, extinction_prop, max_year) {
+  # Filter data to only include available years if needed
+  filtered_data <- data
+  
+  # Determine x-axis breaks based on available years
+  available_levels <- levels(filtered_data$Year)
+  x_breaks <- available_levels[seq(1, length(available_levels), by = 10)]
+  
+  # Create the plot
+  p <- ggplot() + 
+    geom_line(data = filtered_data, aes(x = Year, y = PopSize, group = Rep, color = !!sym(color_var)), alpha = 0.4) +
+    scale_y_continuous(limits = c(0, NA)) +
+    scale_x_discrete(breaks = x_breaks) +
+    scale_color_viridis_c(
+      option = color_option, limits = c(0, 1), begin = 0, end = 0.5
+    ) +
+    labs(color = color_title, y = "Population size", x = "Year") +
+    geom_point()
+  
+  # Find a position for the text that's guaranteed to be within the plot area
+  x_idx <- which(as.numeric(available_levels) >= 70)[1]
+  if (is.na(x_idx)) {
+    x_idx <- length(available_levels) / 2  # Use middle of x-axis if 70 not available
+  }
+  x_val <- available_levels[x_idx]
+  
+  # Add extinction text as a separate annotation
+  p <- p + annotate(
+    "text",
+    x = x_val,
+    y = 15,
+    label = paste("Proportion of extinction =", Prop.extinction),
+    size = 4.5
+  )
+  
+  # Only add vertical lines if those years exist in the data
+  if ("2" %in% available_levels) {
+    p <- p + geom_vline(xintercept = "2", linetype = "dashed", color = "green", linewidth = 0.8)
+  }
+  
+  if ("6" %in% available_levels) {
+    p <- p + geom_vline(xintercept = "6", linetype = "dashed", color = "black", linewidth = 0.8)
+  }
+  
+  # Add theme elements
+  p <- p + theme_minimal() +
+    theme(
+      axis.line.x = element_line(color = "black", linewidth = 0.6),
+      axis.line.y.left = element_line(color = "black", linewidth = 0.6),
+      axis.ticks = element_line(),
+      axis.text.x = element_text(size = 14),        
+      axis.text.y = element_text(size = 14),        
+      axis.title.x = element_text(size = 16),      
+      axis.title.y = element_text(size = 16),      
+      legend.position = "right",
+      panel.grid.major = element_blank(),    
+      panel.grid.minor = element_blank(),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA)
+    ) +
+    guides(color = guide_colorbar(title = paste0("Percent ", sub("Prop", "", color_title)), barwidth = 1, barheight = 15))
+  
+  return(p)
+}
+
+# Create the first plot with Prop_Bencheck
+plot1 <- create_plot(
+  data = d,
+  color_var = "Prop_Bencheck", 
+  color_title = "Beneficial", 
+  color_option = "viridis",
+  extinction_prop = Prop.extinction,
+  max_year = max_year
+)
+
+# Save the first plot
+plot_filename1 <- paste0("Trial_Ong_NB_14_P_0.05_R_PropBen.png")
+ggsave(plot_filename1, plot = plot1, device = ragg::agg_png, width = 8, height = 7, dpi = 300)
+
+# Create the second plot with PropInf
+plot2 <- create_plot(
+  data = d,
+  color_var = "PropInf", 
+  color_title = "Diseased", 
+  color_option = "plasma",
+  extinction_prop = Prop.extinction,
+  max_year = max_year
+)
+
+# Save the second plot
+plot_filename2 <- paste0("Trial_Ong_NB_14_P_0.05_R_R_WPS.png")
+ggsave(plot_filename2, plot = plot2, device = ragg::agg_png, width = 8, height = 7, dpi = 300)
+
+# Print information about what was done
+cat(paste("Analysis performed using data up to year/row", analysis_row, "(max available:", max_available_row, ")\n"))
+cat(paste("Plots saved as", plot_filename1, "and", plot_filename2, "\n"))
+
+```
+
+
+
+```{r}
+nreps=1000
+
+# Function to safely extract values from a matrix at a specific row
+# Returns a vector of zeros if row is out of bounds
+safe_extract_row <- function(matrix, row_index) {
+  if(is.null(matrix) || nrow(matrix) < row_index || row_index <= 0) {
+    return(rep(NA, ncol(matrix)))
+  } else {
+    return(matrix[row_index, ])
+  }
+}
+
+# Function to safely calculate mean and SD with proper handling
+safe_mean_sd <- function(values) {
+  if(all(values == 0)) {
+    return(list(mean = 0.00, sd = 0.00))
+  } else {
+    return(list(mean = round(mean(values, na.rm = TRUE), 2), 
+                sd = round(sd(values, na.rm = TRUE), 2)))
+  }
+}
+
+# Function to safely calculate extinction
+safe_extinction <- function(matrix, row_index, nreps) {
+  if(is.null(matrix) || nrow(matrix) < row_index || row_index <= 0) {
+    return(100)
+  } else {
+    extinct_reps <- sum(matrix[row_index, ] == 0, na.rm = TRUE)
+    return(((extinct_reps)/nreps) * 100)
+  }
+}
+
+# Function to safely calculate proportion with BM
+safe_proportion_BM <- function(popMat, popMat3, row_index) {
+  if(is.null(popMat) || is.null(popMat3) || 
+     nrow(popMat) < row_index || nrow(popMat3) < row_index || 
+     row_index <= 0) {
+    return(0.00)
+  } else {
+    indices <- which(popMat3[row_index, ] > 0)
+    if(length(indices) == 0) {
+      return(0.00)
+    }
+    satisfying_elements <- popMat[row_index, indices]
+    satisfying_vector <- as.vector(satisfying_elements)
+    proportion <- round((length(satisfying_vector)/length(as.vector(popMat[row_index, ]))) * 100, 2)
+    return(proportion)
+  }
+}
+
+# Check and extract Population Size for Year 50
+AveragePS50 <- safe_extract_row(popMat, 51)
+PS50_stats <- safe_mean_sd(AveragePS50)
+MeanPS50 <- PS50_stats$mean
+SDPS50 <- PS50_stats$sd
+cat("Mean PS In Year 50:", MeanPS50, "\n")
+cat("SD PS In Year 50:", SDPS50, "\n")
+
+# Check and extract Population Size for Year 700
+AveragePS700 <- safe_extract_row(popMat, 700)
+PS700_stats <- safe_mean_sd(AveragePS700)
+MeanPS700 <- PS700_stats$mean
+SDPS700 <- PS700_stats$sd
+cat("Mean PS In Year 700:", MeanPS700, "\n")
+cat("SD PS In Year 700:", SDPS700, "\n")
+
+# Check and extract Heterozygosity for Year 50
+AverageHet50 <- safe_extract_row(popMat4, 51)
+Het50_stats <- list(
+  mean = if(all(AverageHet50 == 0)) 0.00 else mean(AverageHet50, na.rm = TRUE),
+  sd = if(all(AverageHet50 == 0)) 0.00 else sd(AverageHet50, na.rm = TRUE)
+)
+MeanHet50 <- Het50_stats$mean
+SDHet50 <- Het50_stats$sd
+cat("Mean Het In Year 50:", MeanHet50, "\n")
+cat("SD Het In Year 50:", SDHet50, "\n")
+
+# Check and extract Heterozygosity for Year 700
+AverageHet700 <- safe_extract_row(popMat4, 700)
+Het700_stats <- list(
+  mean = if(all(AverageHet700 == 0)) 0.00 else mean(AverageHet700, na.rm = TRUE),
+  sd = if(all(AverageHet700 == 0)) 0.00 else sd(AverageHet700, na.rm = TRUE)
+)
+MeanHet700 <- Het700_stats$mean
+SDHet700 <- Het700_stats$sd
+cat("Mean Het In Year 700:", MeanHet700, "\n")
+cat("SD Het In Year 700:", SDHet700, "\n")
+
+# Calculate Proportion of Extinction for Year 50
+Prop.extinction50 <- safe_extinction(popMat4, 51, nreps)
+cat("Proportion of simulations went extinct in year 50:", Prop.extinction50, "\n")
+
+# Calculate Proportion of Extinction for Year 700
+Prop.extinction700 <- safe_extinction(popMat, 600, nreps)
+cat("Proportion of simulations went extinct in year 700:", Prop.extinction700, "\n")
+
+# Calculate Proportion of individuals with BM at year 700
+# Note: Original code was using popMat3[600, ], keeping the same row index
+Proportion_of_BM <- safe_proportion_BM(popMat, popMat3, 600)
+cat("PFM700:", Proportion_of_BM, "\n")
+
+# Calculate Proportion of individuals with BM at year 50
+Proportion_of_BM2 <- safe_proportion_BM(popMat, popMat3, 51)
+cat("PFM50:", Proportion_of_BM2, "\n")
+
+# Create a data frame for the summary table with parameters as columns and values as rows
+summary_table <- data.frame(
+  PS_50 = sprintf("%.2f (%.2f)", MeanPS50, SDPS50),
+  PS_700 = sprintf("%.2f (%.2f)", MeanPS700, SDPS700),
+  Het_50 = sprintf("%.2e (%.2e)", MeanHet50, SDHet50),
+  Het_700 = sprintf("%.2e (%.2e)", MeanHet700, SDHet700),
+  Extinction_50 = Prop.extinction50,
+  Extinction_700 = Prop.extinction700,
+  PBM_50 = Proportion_of_BM2,
+  PBM_700 = Proportion_of_BM
+)
+
+# Display the summary table with HTML formatting
+kable(summary_table, 
+      format = "latex", 
+      row.names = TRUE,  # Adds row indices for easier reading
+      caption = "Summary of Simulation Results") %>%
+  kable_styling(full_width = FALSE, position = "left")
+
+# Display the summary table with LaTeX formatting
+kable(summary_table, caption = "Summary Statistics", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position")) %>%
+  row_spec(0, extra_latex_after = "\\hline\\hline") %>%  # Two lines at the top
+  row_spec(nrow(summary_table), extra_latex_after = "\\hline")  # One line at the bottom
+```
